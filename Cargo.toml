@@ -5,5 +5,12 @@ authors = ["Lukas Kalbertodt <lukas.kalbertodt@gmail.com>"]
 
 
 [dependencies]
+regex_macros = "*"
 rustc-serialize = "*"
 telegram-bot = "*"
+itertools = "*"
+strsim = "*"
+
+[dependencies.regex]
+version = "*"
+features = ["pattern"]

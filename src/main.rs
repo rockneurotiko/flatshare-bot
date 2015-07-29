@@ -1,11 +1,19 @@
-extern crate telegram_bot as telegram;
+#![feature(plugin)]
+#![plugin(regex_macros)]
+
+extern crate itertools;
+extern crate regex;
 extern crate rustc_serialize;
+extern crate strsim;
+extern crate telegram_bot as telegram;
 
 mod bot;
-mod store;
+mod iter;
+mod needed;
 
-// use rustc_serialize::json;
+use bot::{MartiniBot, LogLevel};
 use std::env;
+use std::path::Path;
 
 fn main() {
     // Fetch environment variable with bot token
@@ -16,13 +24,13 @@ fn main() {
     };
 
     // Create bot and print bot information, if it succeeded
-    let mut bot = match bot::Martini::new(token) {
-        Ok(bot) => {
-            println!("Started bot: {:?}", bot.me());
-            bot
-        },
-        Err(e) => panic!("Error starting bot: {:?}", e),
-    };
-    bot.run();
+    let mut bot = MartiniBot::from_token(token)
+        .with_logfile(Path::new("log.txt"))
+        .with_loglevel(LogLevel::Debug)
+        .build()
+        .unwrap_or_else(|e| panic!("Error starting bot: {} \n{:?}", e, e));
 
+    let me = bot.me();
+    bot.log(LogLevel::Info, &*format!("Started bot: {:?}", me));
+    bot.run();
 }
