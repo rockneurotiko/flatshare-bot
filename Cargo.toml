@@ -7,10 +7,13 @@ authors = ["Lukas Kalbertodt <lukas.kalbertodt@gmail.com>"]
 [dependencies]
 regex_macros = "*"
 rustc-serialize = "*"
-telegram-bot = "*"
 itertools = "*"
 strsim = "*"
+term-painter = "*"
 
 [dependencies.regex]
 version = "*"
 features = ["pattern"]
+
+[dependencies.telegram-bot]
+path = "/home/lukas/dev/telegram-bot"

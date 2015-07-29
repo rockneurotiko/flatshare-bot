@@ -46,6 +46,53 @@ impl PartialOrd for LogLevel {
     }
 }
 
+struct Logger {
+    logfile: Option<fs::File>,
+    loglevel: LogLevel,
+}
+
+impl Logger {
+    pub fn log(&mut self, lvl: LogLevel, msg: &str) {
+        use term_painter::{Attr, ToStyle};
+        use term_painter::Color::*;
+        use self::LogLevel::*;
+
+        if lvl < self.loglevel {
+            return;
+        }
+
+        if let Some(ref mut file) = self.logfile {
+            if let Err(e) = write!(file, "[{}] {}", lvl.prefix(), msg) {
+                panic!("Error occured while writing log file: {}\n{:?}", e, e);
+            }
+        }
+
+        let prefix = match lvl {
+            Error   => Attr::Bold.fg(Red),
+            Warning => Attr::Bold.fg(Yellow),
+            Info    => Attr::Plain.fg(White),
+            Debug   => Attr::Dim.fg(NotSet),
+        };
+        let text = match lvl {
+            Error   => Attr::Bold.fg(Red),
+            Warning => Attr::Plain.fg(Yellow),
+            Info    => Attr::Plain.fg(NotSet),
+            Debug   => Attr::Plain.fg(NotSet),
+        };
+
+        println!("[{}] {}", prefix.paint(lvl.prefix()), text.paint(msg));
+    }
+}
+
+macro_rules! log {
+    ($this:ident, $lvl:ident: $fmt:expr) => {
+        $this.logger.log(LogLevel::$lvl, $fmt);
+    };
+    ($this:ident, $lvl:ident: $fmt:expr, $($arg:tt)*) => {
+        $this.logger.log(LogLevel::$lvl, &*format!($fmt, $($arg)*));
+    };
+}
+
 // Data per FlatShare
 #[derive(Default)]
 struct FlatShare {
@@ -53,14 +100,13 @@ struct FlatShare {
 }
 
 // Maps a Telegram 'ChatID' to the corresponding flatshare data
-pub type FlatMap = HashMap<telegram::Integer, Arc<Mutex<FlatShare>>>;
+pub type FlatMap = HashMap<telegram::Integer, FlatShare>;
 
 pub struct MartiniBot {
-    api: telegram::Bot,
+    api: Arc<Mutex<telegram::Bot>>,
     me: telegram::User,
-    flats: Arc<Mutex<FlatMap>>,
-    logfile: Option<fs::File>,
-    loglevel: LogLevel,
+    flats: FlatMap,
+    logger: Logger,
 }
 
 pub struct BotBuilder<'a> {
@@ -99,17 +145,18 @@ impl<'a> BotBuilder<'a> {
         };
 
         Ok(MartiniBot {
-            api: api,
+            api: Arc::new(Mutex::new(api)),
             me: me,
-            flats: Arc::new(Mutex::new(FlatMap::new())),
-            logfile: file,
-            loglevel: self.loglevel,
+            flats: FlatMap::new(),
+            logger: Logger {
+                logfile: file,
+                loglevel: self.loglevel,
+            }
         })
     }
 }
 
 impl MartiniBot {
-
     pub fn from_token(token: String) -> BotBuilder<'static> {
         BotBuilder {
             token: token,
@@ -123,31 +170,21 @@ impl MartiniBot {
     }
 
     pub fn log(&mut self, lvl: LogLevel, msg: &str) {
-        if lvl < self.loglevel {
-            return;
-        }
-
-        if let Some(ref mut file) = self.logfile {
-            if let Err(e) = write!(file, "[{}] {}", lvl.prefix(), msg) {
-                panic!("Error occured while writing log file: {}\n{:?}", e, e);
-            }
-        }
-
-        println!("[{}] {}", lvl.prefix(), msg);
+        self.logger.log(lvl, msg);
     }
 
     pub fn run(&mut self) {
         // Fetch new updates via long poll method
-        let flats = self.flats.clone();
-        let res = self.api.long_poll(None, |api, u| {
-            Self::handle(flats.clone(), api, u)
+        let api = self.api.clone();
+        let res = api.lock().unwrap().long_poll(None, |api, u| {
+            self.handle(api, u)
         });
         if let Err(e) = res {
-            self.log(LogLevel::Error, &*format!("An error occured: {}", e));
+            log!(self, Error: "An error occured: {}", e);
         }
     }
 
-    fn handle(flats: Arc<Mutex<FlatMap>>,
+    fn handle(&mut self,
               api: &mut telegram::Bot,
               u: telegram::Update)
         -> telegram::Result<()>
@@ -158,38 +195,34 @@ impl MartiniBot {
         if let Some(m) = u.message {
             let name = m.from.first_name + &*m.from.last_name
                 .map_or("".to_string(), |mut n| { n.insert(0, ' '); n });
-            let chat_id = m.chat.id();
+            let cid = m.chat.id();
 
-            let flat_data = {
-                let mut flats = flats.lock().unwrap();
-                if !flats.contains_key(&chat_id) {
-                    flats.insert(chat_id, Arc::new(Mutex::new(FlatShare::default())));
-                }
-                flats.get_mut(&chat_id).unwrap().clone()
-            };
-            let mut flat_data = flat_data.lock().unwrap();
+            // if !self.flats.contains_key(&cid) {
+            //     self.flats.insert(cid, FlatShare::default());
+            // }
+            // let flat = self.flats.get_mut(&cid).unwrap();
+            let flat = self.flats.entry(cid);
+
 
             // Match message type
             if let MessageType::Text(t) = m.msg {
                 // Print received text message to stdout
-                // self.log(LogLevel::Debug, format!("<{}> {}", name, t));
+                log!(self, Debug: "<{}> {}", name, t);
 
                 let command_prefix = Regex::new(r"/\w+ ").unwrap();
                 if t.starts_with(&command_prefix) {
                     let arg = t.trim_left_matches(&command_prefix);
                     match t.splitn(2, " ").next().unwrap() {
                         "/need" => {
-                            let msg = flat_data.needed.handle_need(arg.into());
-                            try!(api.send_message(chat_id, msg, None, None, None));
+                            let msg = flat.or_insert(FlatShare::default()).needed.handle_need(arg.into());
+                            try!(api.send_message(cid, msg, None, None, None));
                         },
                         "/got" => {
-                            let msg = flat_data.needed.handle_got(arg.into());
-                            try!(api.send_message(chat_id, msg, None, None, None));
+                            let msg = flat.or_insert(FlatShare::default()).needed.handle_got(arg.into());
+                            try!(api.send_message(cid, msg, None, None, None));
                         }
                         command => {
-                            // self.log(LogLevel::Warning, format!(
-                            //     "Warning: Unknown command '{}'", command
-                            // ));
+                            log!(self, Warning: "Unknown command '{}'", command);
                         }
                     }
 

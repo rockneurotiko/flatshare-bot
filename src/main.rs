@@ -6,6 +6,7 @@ extern crate regex;
 extern crate rustc_serialize;
 extern crate strsim;
 extern crate telegram_bot as telegram;
+extern crate term_painter;
 
 mod bot;
 mod iter;
