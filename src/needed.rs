@@ -80,7 +80,12 @@ impl Needed {
         let mut already_there = Vec::new();
 
         // If the item was already on list: Report. Push to list otherwise.
-        for item in args.split(',').map(|a| a.trim().to_owned().into()) {
+        let args = args
+            .split(',')
+            .map(|a| a.trim())
+            .filter(|a| a.len() > 0)
+            .map(|a| a.to_owned().into());
+        for item in args {
             if self.list.contains(&item) {
                 already_there.push(item);
             } else {

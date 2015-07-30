@@ -120,6 +120,7 @@ pub struct BotBuilder<'a> {
 }
 
 /// Type for building a bot easily
+#[allow(dead_code)]
 impl<'a> BotBuilder<'a> {
     /// Specifies a logfile to log into. By default the bot does not log
     /// into a file.
@@ -286,48 +287,60 @@ impl MartiniBot {
     {
         use telegram::types::*;
 
-        // If the received update contains a message...
-        if let Some(m) = u.message {
-            let name = m.from.first_name + &*m.from.last_name
-                .map_or("".to_string(), |mut n| { n.insert(0, ' '); n });
-            let cid = m.chat.id();
+        // If the received update contains no text message: Return.
+        let m = match u.message {
+            Some(m) => m,
+            None => return Ok(()),
+        };
+        let t = match m.msg {
+            MessageType::Text(t) => t,
+            _ => return Ok(()),
+        };
 
-            // if !self.flats.contains_key(&cid) {
-            //     self.flats.insert(cid, FlatShare::default());
-            // }
-            // let flat = self.flats.get_mut(&cid).unwrap();
-            // let flat = self.flats.entry(cid);
+        let name = if let Some(ln) = m.from.last_name {
+            format!("{} {}", m.from.first_name, ln)
+        } else {
+            m.from.first_name
+        };
 
+        let cid = m.chat.id();
 
-            // Match message type
-            if let MessageType::Text(t) = m.msg {
-                // Print received text message to stdout
-                log!(self, Debug: "<{}> {}", name, t);
+        // Match message type
+        // Print received text message to stdout
+        let room = match m.chat {
+            Chat::Group(ref g) => format!("{}#'{}'", g.id, g.title),
+            Chat::User(_) => "private".into(),
+        };
+        log!(self, Debug: "<{} @ {}> {}", name, room, t);
 
-                let command_prefix = Regex::new(r"/\w+ ").unwrap();
-                if t.starts_with(&command_prefix) {
-                    let arg = t.trim_left_matches(&command_prefix);
-                    match t.splitn(2, " ").next().unwrap() {
-                        "/need" => {
-                            let msg = self.flat(cid).needed.handle_need(arg.into());
-                            try!(api.send_message(cid, msg, None, None, None));
-                        },
-                        "/got" => {
-                            let msg = self.flat(cid).needed.handle_got(arg.into());
-                            try!(api.send_message(cid, msg, None, None, None));
-                        }
-                        command => {
-                            log!(self, Warning: "Unknown command '{}'", command);
-                        }
-                    }
+        let command = Regex::new(r"^/\w+").unwrap();
+        // if let Some(com) = command.find(&*t).map(|(l,h)| t[l..h]) {
+        //     // try!()
+        // }
 
+        if t.starts_with(&command) {
+            let arg = t.trim_left_matches(&command);
+            match t.splitn(2, " ").next().unwrap() {
+                "/need" => {
+                    let msg = self.flat(cid).needed.handle_need(arg.into());
+                    try!(api.send_message(cid, msg, None, None, None));
+                },
+                "/got" => {
+                    let msg = self.flat(cid).needed.handle_got(arg.into());
+                    try!(api.send_message(cid, msg, None, None, None));
                 }
-
-                // Update file
-                self.write_flat(cid);
+                command => {
+                    log!(self, Warning: "Unknown command '{}'", command);
+                }
             }
+
         }
+
+        // Update file
+        if self.flats.contains_key(&cid) {
+            self.write_flat(cid);
+        }
+
         Ok(())
     }
-
 }
