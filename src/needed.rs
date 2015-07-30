@@ -4,6 +4,7 @@ use std::fmt::{self, Display, Formatter};
 use std::ops::Deref;
 use iter::LangIter;
 use itertools::Itertools;
+use rustc_serialize::{Encodable, Encoder, Decodable, Decoder};
 
 
 
@@ -50,7 +51,21 @@ impl Display for SimString {
     }
 }
 
-#[derive(Default)]
+impl Encodable for SimString {
+    fn encode<E: Encoder>(&self, s: &mut E) -> Result<(), E::Error> {
+        self.orig.encode(s)
+    }
+}
+
+impl Decodable for SimString {
+    fn decode<D: Decoder>(s: &mut D) -> Result<Self, D::Error> {
+        Ok(SimString {
+            orig: try!(String::decode(s)),
+        })
+    }
+}
+
+#[derive(Default, RustcEncodable, RustcDecodable)]
 pub struct Needed {
     pub list: BTreeSet<SimString>,
 }
