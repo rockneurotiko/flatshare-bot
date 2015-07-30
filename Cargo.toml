@@ -10,10 +10,8 @@ rustc-serialize = "*"
 itertools = "*"
 strsim = "*"
 term-painter = "*"
+telegram-bot = "*"
 
 [dependencies.regex]
 version = "*"
 features = ["pattern"]
-
-[dependencies.telegram-bot]
-path = "/home/lukas/dev/telegram-bot"
