@@ -62,7 +62,7 @@ impl Logger {
         }
 
         if let Some(ref mut file) = self.logfile {
-            if let Err(e) = write!(file, "[{}] {}", lvl.prefix(), msg) {
+            if let Err(e) = write!(file, "[{}] {}\n", lvl.prefix(), msg) {
                 panic!("Error occured while writing log file: {}\n{:?}", e, e);
             }
         }
