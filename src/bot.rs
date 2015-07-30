@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use telegram;
 use std::default::Default;
-use std::io::Write;
+use std::io::{Read, Write};
 use rustc_serialize::json;
 
 
@@ -214,7 +214,7 @@ impl MartiniBot {
         let mut file = match file {
             Ok(f) => f,
             Err(e) => {
-                log!(self, Error: "Could not open file '{}': {}", fname, e);
+                log!(self, Error: "Could not open file (w) '{}': {}", fname, e);
                 return;
             }
         };
@@ -228,8 +228,44 @@ impl MartiniBot {
         }
     }
 
+    fn read_flat(&mut self, cid: telegram::Integer) -> Option<FlatShare> {
+        let fname = format!("{}{}.json", self.data_dir, cid);
+        let p = &Path::new(&*fname);
+
+        let file = fs::File::open(p);
+
+        let mut file = match file {
+            Ok(f) => f,
+            Err(e) => {
+                log!(self, Debug: "Could not open file (r) '{}': {}", fname, e);
+                return None;
+            }
+        };
+
+        let mut content = String::new();
+        if let Err(e) = file.read_to_string(&mut content) {
+            log!(self, Warning: "Could not read file '{}': {}", fname, e);
+            return None;
+        }
+
+        match json::decode(&*content) {
+            Ok(f) => {
+                log!(self, Debug: "Read file '{}'", fname);
+                Some(f)
+            },
+            Err(e) => {
+                log!(self, Warning: "Could not decode file '{}': {}", fname, e);
+                None
+            }
+        }
+    }
+
     fn flat(&mut self, cid: telegram::Integer) -> &mut FlatShare {
-        self.flats.entry(cid).or_insert(FlatShare::default())
+        if !self.flats.contains_key(&cid) {
+            let new = self.read_flat(cid).unwrap_or(FlatShare::default());
+            self.flats.insert(cid, new);
+        }
+        self.flats.get_mut(&cid).unwrap()
     }
 
     pub fn run(&mut self) {
