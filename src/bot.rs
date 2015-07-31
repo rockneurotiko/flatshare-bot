@@ -1,6 +1,5 @@
 use std::fs;
 use std::io;
-use std::cmp::{Ordering, PartialOrd};
 use std::path::Path;
 use needed::Needed;
 use regex::Regex;
@@ -10,92 +9,10 @@ use telegram;
 use std::default::Default;
 use std::io::{Read, Write};
 use rustc_serialize::json;
+use log::{LogLevel, Logger};
 
 
-#[derive(PartialEq, Eq, Debug)]
-pub enum LogLevel {
-    Debug,
-    Info,
-    Warning,
-    Error,
-}
-
-impl LogLevel {
-    pub fn prefix(&self) -> &str {
-        use self::LogLevel::*;
-        match *self {
-            Debug => "DEBUG",
-            Info => "INFO ",
-            Warning => "WARN ",
-            Error => "ERROR",
-        }
-    }
-
-    fn as_num(&self) -> u8 {
-        use self::LogLevel::*;
-        match *self {
-            Debug   =>  0,
-            Info    => 10,
-            Warning => 20,
-            Error   => 30,
-        }
-    }
-}
-
-impl PartialOrd for LogLevel {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.as_num().partial_cmp(&other.as_num())
-    }
-}
-
-struct Logger {
-    logfile: Option<fs::File>,
-    loglevel: LogLevel,
-}
-
-impl Logger {
-    pub fn log(&mut self, lvl: LogLevel, msg: &str) {
-        use term_painter::{Attr, ToStyle};
-        use term_painter::Color::*;
-        use self::LogLevel::*;
-
-        if lvl < self.loglevel {
-            return;
-        }
-
-        if let Some(ref mut file) = self.logfile {
-            if let Err(e) = write!(file, "[{}] {}\n", lvl.prefix(), msg) {
-                panic!("Error occured while writing log file: {}\n{:?}", e, e);
-            }
-        }
-
-        let prefix = match lvl {
-            Error   => Attr::Bold.fg(Red),
-            Warning => Attr::Bold.fg(Yellow),
-            Info    => Attr::Plain.fg(White),
-            Debug   => Attr::Dim.fg(NotSet),
-        };
-        let text = match lvl {
-            Error   => Attr::Bold.fg(Red),
-            Warning => Attr::Plain.fg(Yellow),
-            Info    => Attr::Plain.fg(NotSet),
-            Debug   => Attr::Plain.fg(NotSet),
-        };
-
-        println!("[{}] {}", prefix.paint(lvl.prefix()), text.paint(msg));
-    }
-}
-
-macro_rules! log {
-    ($this:ident, $lvl:ident: $fmt:expr) => {
-        $this.logger.log(LogLevel::$lvl, $fmt);
-    };
-    ($this:ident, $lvl:ident: $fmt:expr, $($arg:tt)*) => {
-        $this.logger.log(LogLevel::$lvl, &*format!($fmt, $($arg)*));
-    };
-}
-
-// Data per FlatShare
+// Data of one FlatShare
 #[derive(Default, RustcEncodable, RustcDecodable)]
 struct FlatShare {
     needed: Needed,
@@ -104,14 +21,7 @@ struct FlatShare {
 // Maps a Telegram 'ChatID' to the corresponding flatshare data
 pub type FlatMap = HashMap<telegram::Integer, FlatShare>;
 
-pub struct MartiniBot {
-    api: Arc<Mutex<telegram::Bot>>,
-    me: telegram::User,
-    flats: FlatMap,
-    logger: Logger,
-    data_dir: String,
-}
-
+/// Type for building a bot easily
 pub struct BotBuilder<'a> {
     token: String,
     logfile: Option<&'a Path>,
@@ -119,7 +29,6 @@ pub struct BotBuilder<'a> {
     data_dir: String,
 }
 
-/// Type for building a bot easily
 #[allow(dead_code)]
 impl<'a> BotBuilder<'a> {
     /// Specifies a logfile to log into. By default the bot does not log
@@ -184,7 +93,18 @@ impl<'a> BotBuilder<'a> {
     }
 }
 
+/// Type that handles the main bot tasks.
+pub struct MartiniBot {
+    api: Arc<Mutex<telegram::Bot>>,
+    me: telegram::User,
+    flats: FlatMap,
+    logger: Logger,
+    data_dir: String,
+}
+
 impl MartiniBot {
+    /// This is needed to create a bot. Returns a builder for further
+    /// configuration. Call `build()` to get the bot.
     pub fn from_token(token: String) -> BotBuilder<'static> {
         BotBuilder {
             token: token,
@@ -194,6 +114,7 @@ impl MartiniBot {
         }
     }
 
+    /// Returns the telegram user of the bot.
     pub fn me(&self) -> telegram::User {
         self.me.clone()
     }
@@ -202,10 +123,13 @@ impl MartiniBot {
         self.logger.log(lvl, msg);
     }
 
+    /// Writes the data of one flat into a file in the data_dir.
     fn write_flat(&mut self, cid: telegram::Integer) {
+        // Create filename and path: Use chat id as filename.
         let fname = format!("{}{}.json", self.data_dir, cid);
         let p = &Path::new(&*fname);
 
+        // We want to overwrite everything and create the file if necessary.
         let file = fs::OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -229,7 +153,10 @@ impl MartiniBot {
         }
     }
 
+    /// Tries to read flatshare data from file. Returns `None` if file is not
+    /// present.
     fn read_flat(&mut self, cid: telegram::Integer) -> Option<FlatShare> {
+        // Create filename and path: Use chat id as filename.
         let fname = format!("{}{}.json", self.data_dir, cid);
         let p = &Path::new(&*fname);
 
@@ -261,6 +188,7 @@ impl MartiniBot {
         }
     }
 
+    /// Shortcut to get one flat from the map.
     fn flat(&mut self, cid: telegram::Integer) -> &mut FlatShare {
         if !self.flats.contains_key(&cid) {
             let new = self.read_flat(cid).unwrap_or(FlatShare::default());
@@ -287,7 +215,7 @@ impl MartiniBot {
     {
         use telegram::types::*;
 
-        // If the received update contains no text message: Return.
+        // If the received update does not contain a text message: Return.
         let m = match u.message {
             Some(m) => m,
             None => return Ok(()),
@@ -297,26 +225,24 @@ impl MartiniBot {
             _ => return Ok(()),
         };
 
-        let name = if let Some(ln) = m.from.last_name {
-            format!("{} {}", m.from.first_name, ln)
+        // A nice formatted name.
+        let name = if let Some(last) = m.from.last_name {
+            format!("{} {}", m.from.first_name, last)
         } else {
             m.from.first_name
         };
 
         let cid = m.chat.id();
 
-        // Match message type
-        // Print received text message to stdout
+        // Log received text message.
         let room = match m.chat {
             Chat::Group(ref g) => format!("{}#'{}'", g.id, g.title),
             Chat::User(_) => "private".into(),
         };
         log!(self, Debug: "<{} @ {}> {}", name, room, t);
 
+        // Parse command
         let command = Regex::new(r"^/\w+").unwrap();
-        // if let Some(com) = command.find(&*t).map(|(l,h)| t[l..h]) {
-        //     // try!()
-        // }
 
         if t.starts_with(&command) {
             let arg = t.trim_left_matches(&command);

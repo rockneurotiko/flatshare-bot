@@ -8,11 +8,15 @@ extern crate strsim;
 extern crate telegram_bot as telegram;
 extern crate term_painter;
 
+#[macro_use]
+mod log;
 mod bot;
 mod iter;
 mod needed;
 
-use bot::{MartiniBot, LogLevel};
+
+use bot::MartiniBot;
+use log::LogLevel;
 use std::env;
 use std::path::Path;
 
