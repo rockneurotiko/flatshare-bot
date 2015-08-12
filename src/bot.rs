@@ -58,7 +58,7 @@ impl<'a> BotBuilder<'a> {
     /// Create a bot out of the given configuration.
     pub fn build(self) -> telegram::Result<MartiniBot> {
         // Create and test the api.
-        let mut api = telegram::Bot::new(self.token);
+        let mut api = telegram::Api::from_token(&self.token).unwrap();
         let me = try!(api.get_me());
 
         // Try to open the logfile in writing-append mode if specified
@@ -95,7 +95,7 @@ impl<'a> BotBuilder<'a> {
 
 /// Type that handles the main bot tasks.
 pub struct MartiniBot {
-    api: Arc<Mutex<telegram::Bot>>,
+    api: Arc<Mutex<telegram::Api>>,
     me: telegram::User,
     flats: FlatMap,
     logger: Logger,
@@ -199,30 +199,31 @@ impl MartiniBot {
 
     pub fn run(&mut self) {
         // Fetch new updates via long poll method
-        let api = self.api.clone();
-        let res = api.lock().unwrap().long_poll(None, |api, u| {
-            self.handle(api, u)
+        let mut listener = self.api.lock().unwrap().listener(telegram::ListeningMethod::LongPoll(None));
+
+        let res = listener.listen(|u| {
+            self.handle(u)
         });
+
         if let Err(e) = res {
             log!(self, Error: "An error occured: {}", e);
         }
     }
 
     fn handle(&mut self,
-              api: &mut telegram::Bot,
               u: telegram::Update)
-        -> telegram::Result<()>
+              -> telegram::Result<telegram::ListeningAction>
     {
         use telegram::types::*;
 
         // If the received update does not contain a text message: Return.
         let m = match u.message {
             Some(m) => m,
-            None => return Ok(()),
+            None => return Ok(telegram::ListeningAction::Continue),
         };
         let t = match m.msg {
             MessageType::Text(t) => t,
-            _ => return Ok(()),
+            _ => return Ok(telegram::ListeningAction::Continue),
         };
 
         // A nice formatted name.
@@ -249,11 +250,11 @@ impl MartiniBot {
             match t.splitn(2, " ").next().unwrap() {
                 "/need" => {
                     let msg = self.flat(cid).needed.handle_need(arg.into());
-                    try!(api.send_message(cid, msg, None, None, None));
+                    try!(self.api.lock().unwrap().send_message(cid, msg, None, None, None));
                 },
                 "/got" => {
                     let msg = self.flat(cid).needed.handle_got(arg.into());
-                    try!(api.send_message(cid, msg, None, None, None));
+                    try!(self.api.lock().unwrap().send_message(cid, msg, None, None, None));
                 }
                 command => {
                     log!(self, Warning: "Unknown command '{}'", command);
@@ -267,6 +268,6 @@ impl MartiniBot {
             self.write_flat(cid);
         }
 
-        Ok(())
+        Ok(telegram::ListeningAction::Continue)
     }
 }
